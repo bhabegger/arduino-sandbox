@@ -3,8 +3,6 @@
 
 Servo servo;
 
-LiquidCrystal lcd(2,1,4,5,6,7);
-
 // Sonar Pins
 const int trigPin = 12;
 const int echoPin = 13;
@@ -16,25 +14,28 @@ const int wheelRightForward  = 10;
 const int wheelRightBackward = 11;
 
 // Head servo
-const int headServoPin = 3;
+const int headServoPin = 4;
+const int frontAngle = 90;
+
 
 boolean movingForward = false;
 void setup() {
   servo.attach(headServoPin);
   
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
-  pinMode(echoPin, INPUT); // Sets the echoPin as an Input
-  Serial.begin(9600); // Starts the serial communication
+  pinMode(echoPin, INPUT);  // Sets the echoPin as an Input
+  Serial.begin(9600);       // Starts the serial communication
   
-  servo.write(90);
-  delay(100);
+  Serial.write("Head check");
+  acknowledge();
+  delay(1000);
   
+  Serial.write("Motor check");
   rotate(360);
   movingForward = false;
-  
-  lcd.begin(16,2);
-  lcd.clear();
-  lcd.print("Hello");
+  delay(1000);
+
+  Serial.write("Ready");
 }
 
 void loop() {  
@@ -44,14 +45,15 @@ void loop() {
    if(distance < 15) {
        halt();
        
-       servo.write(0);
+       servo.write(frontAngle - 90);
        delay(500);
-       servo.write(180);
+       servo.write(frontAngle + 90);
        delay(500);
-       servo.write(90);
+       servo.write(frontAngle);
 
        delay(2000);
        backward();
+       delay(1000);
        halt();
        
        int bestAngle = scanSonar();
@@ -60,23 +62,35 @@ void loop() {
        Serial.println();
        servo.write(bestAngle);
        delay(2000);
-       servo.write(90);
+       servo.write(frontAngle + bestAngle);
        delay(1000);
        
-       if(bestAngle > 60 && bestAngle < 120) {
+       if(bestAngle > -30 && bestAngle < 30) {
          Serial.print("U turn");
          rotate(180);
        } else {
          Serial.print("Rotate: ");
          Serial.println(bestAngle);
          servo.write(bestAngle);
-         rotate(bestAngle - 90);
-         servo.write(90);
+         rotate(bestAngle);
+         servo.write(frontAngle);
        }
        halt();
        Serial.println("");
    }
    forward();
+}
+
+
+void acknowledge() {
+   servo.write(calibratedAngle(-90));
+   delay(500);
+      
+   servo.write(calibratedAngle(90));
+   delay(500);
+   
+   servo.write(calibratedAngle(0));  
+   delay(100);
 }
 
 void rotate(int deg) {
@@ -123,6 +137,10 @@ void forward() {
   }
 }
 
+int calibratedAngle(int angle) {
+ return (frontAngle + angle + 360) % 360;
+}
+
 void backward() {
   delay(100);
   digitalWrite(wheelLeftForward, LOW);
@@ -132,11 +150,12 @@ void backward() {
 }
 
 int scanSonar() {
-  int angleStep = 5;
+  int angleStep = 10;
   int bestDistance = 0;
-  int bestAngle = 90;
-  for(int angle=0;angle<=180; angle+=angleStep) {
-    servo.write(angle);
+  int bestAngle = 0;
+  for(int angle=-90;angle<=90; angle+=angleStep) {
+    servo.write(calibratedAngle(angle));
+    delay(200);
     int curDistance = checkSonar();
     Serial.print("Distance at angle ");
     Serial.print(angle);
@@ -150,7 +169,7 @@ int scanSonar() {
       bestDistance = curDistance; 
     }
   }
-  servo.write(90);
+  servo.write(frontAngle);
   return bestAngle;
 }
 
@@ -158,7 +177,7 @@ int checkSonar() {
      int distance;
      long duration;
 
-     delay(15);
+     delay(100);
      
      // Clears the trigPin
      digitalWrite(trigPin, LOW);
@@ -178,4 +197,3 @@ int checkSonar() {
      }
      return distance;
 }
-
