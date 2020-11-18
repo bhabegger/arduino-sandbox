@@ -1,7 +1,12 @@
 #include<Servo.h>
 #include<LiquidCrystal.h>
+#include <SoftwareSerial.h>
 
-Servo servo;
+// Command Serial config
+const int commandRx = 2;
+const int commandTx = 3;
+const long commandBaudRate = 115200;
+SoftwareSerial commandSerial(commandRx, commandTx);
 
 // Sonar Pins
 const int trigPin = 12;
@@ -14,73 +19,159 @@ const int wheelRightForward  = 10;
 const int wheelRightBackward = 11;
 
 // Head servo
+Servo servo;
 const int headServoPin = 4;
 const int frontAngle = 90;
 
-
+// State
 boolean movingForward = false;
+boolean autoPilot = true;
+char message[256];       // Buffer for formatted log messages
+char commandBuffer[80];
+int cmdPos = 0;
+
 void setup() {
-  servo.attach(headServoPin);
+  Serial.begin(115200);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for Native USB only
+  }
+  Serial.println("Initializing");
+
+  // Sonar setup
+  sprintf(message, "Configuring sonar: TriggerPin=%d EchoPin=%d", trigPin, echoPin);
+  Serial.println(message);
   
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
   pinMode(echoPin, INPUT);  // Sets the echoPin as an Input
-  Serial.begin(9600);       // Starts the serial communication
+  int distance = checkSonar();
   
-  Serial.write("Head check");
+  sprintf(message, "Current distance: %d", distance);
+  Serial.println(message);
+
+  // Servo setup
+  sprintf(message, "Configuring head servo: ServoPin=%d FrontAngle=%d", headServoPin, frontAngle);
+  Serial.println(message);
+  
+  servo.attach(headServoPin);
   acknowledge();
-  delay(1000);
+
+  // Motors setup
+  sprintf(message, "Configuring wheel motors: LeftWheelForwardPin=%d LeftWheelBackwardPin=%d RightWheelForwardPin=%d RightWheelBackwardPin=%d",wheelLeftForward, wheelLeftBackward, wheelRightForward, wheelRightBackward);
+  Serial.println(message);
   
-  Serial.write("Motor check");
   rotate(360);
   movingForward = false;
   delay(1000);
 
-  Serial.write("Ready");
+  // Command serial connection
+  sprintf(message, "Configuring command serial connection: RxPin=%d TxPin=%d BaudRate", commandRx, commandTx, commandBaudRate);
+  Serial.println(message);
+  
+  commandSerial.begin(commandBaudRate);
+  
+  // We are all set
+  Serial.println("Ready");
 }
 
 void loop() {  
    int distance = checkSonar();
-   // Serial.print("Distance : ");
-   // Serial.println(distance);
-   if(distance < 15) {
+   if(0 <distance && distance < 15) {
+       sprintf(message, "Sonar check gave short distance (%d). Halting.",distance);
+       Serial.println(message);
        halt();
-       
-       servo.write(frontAngle - 90);
-       delay(500);
-       servo.write(frontAngle + 90);
-       delay(500);
-       servo.write(frontAngle);
 
-       delay(2000);
-       backward();
-       delay(1000);
-       halt();
-       
-       int bestAngle = scanSonar();
-       Serial.print("Best angle : ");
-       Serial.print(bestAngle);
-       Serial.println();
-       servo.write(bestAngle);
-       delay(2000);
-       servo.write(frontAngle + bestAngle);
-       delay(1000);
-       
-       if(bestAngle > -30 && bestAngle < 30) {
-         Serial.print("U turn");
-         rotate(180);
-       } else {
-         Serial.print("Rotate: ");
-         Serial.println(bestAngle);
-         servo.write(bestAngle);
-         rotate(bestAngle);
+       if(autoPilot) {
+         servo.write(frontAngle - 90);
+         delay(500);
+         servo.write(frontAngle + 90);
+         delay(500);
          servo.write(frontAngle);
+  
+         delay(2000);
+         backward();
+         delay(1000);
+         halt();
+         
+         int bestAngle = scanSonar();
+         sprintf(message, "Best angle: %d",bestAngle);
+         Serial.println(message);
+         
+         servo.write(bestAngle);
+         delay(2000);
+         servo.write(frontAngle + bestAngle);
+         delay(1000);
+         
+         if(bestAngle > -30 && bestAngle < 30) {
+           Serial.println("Best angle too in front: Making a u-turn");
+           rotate(180);
+         } else {
+           sprintf(message, "Rotating %d",bestAngle);
+           Serial.println(message);
+           
+           servo.write(bestAngle);
+           rotate(bestAngle);
+           servo.write(frontAngle);
+         }
+         halt();
        }
-       halt();
-       Serial.println("");
    }
-   forward();
+   if(autoPilot) {
+     forward();
+   }
+   
+   if(commandSerial.available()) {
+    if (cmdPos > 79) {
+      cmdPos = 0;
+    }
+    commandBuffer[cmdPos] = commandSerial.read();
+    Serial.print("Read: '");
+    Serial.print(commandBuffer[cmdPos]);
+    Serial.print("'=");
+    Serial.println((int)commandBuffer[cmdPos]);
+    if(commandBuffer[cmdPos] != 13 && commandBuffer[cmdPos] > 0) { // Skip spaces
+      cmdPos++;
+    } else {
+      Serial.println("Skipped");
+    }
+    if(commandBuffer[cmdPos-1] == '\n') {
+      commandBuffer[cmdPos-1] = 0;
+      sprintf(message, "Recieved command: '%s'",commandBuffer);
+      Serial.println(message);
+      String line = String(commandBuffer);      
+      if(strcmp(commandBuffer,"stop") == 0) {
+        Serial.println("Stopping");
+        autoPilot = false;
+        halt();
+      } else if(strcmp(commandBuffer,"left") == 0) {
+        Serial.println("Rotating left");
+        autoPilot = false;
+        halt();
+        rotate(frontAngle - 15);
+      } else if(strcmp(commandBuffer,"right") == 0) {
+        Serial.println("Rotating right");
+        autoPilot = false;
+        halt();
+        rotate(frontAngle + 15);
+      } else if(strcmp(commandBuffer,"forward") == 0) {
+        Serial.println("Moving forward");
+        autoPilot = false;
+        forward();
+      } else if(strcmp(commandBuffer,"backward") == 0) {
+        Serial.println("Moving backward");
+        autoPilot = false;
+        backward();
+      } else if(strcmp(commandBuffer,"auto") == 0) {
+        Serial.println("Enabling autopilot");
+        autoPilot = true;
+      } else {
+        Serial.print(">> ");
+        Serial.println(commandBuffer);
+      }
+      cmdPos = 0;
+      commandBuffer[0] = 0;
+    }
+  }
 }
-
 
 void acknowledge() {
    servo.write(calibratedAngle(-90));
