@@ -1,12 +1,9 @@
 #include<Servo.h>
-#include<LiquidCrystal.h>
-#include <SoftwareSerial.h>
+// #include<LiquidCrystal.h>
+#include<Wire.h>
 
-// Command Serial config
-const int commandRx = 2;
-const int commandTx = 3;
-const long commandBaudRate = 115200;
-SoftwareSerial commandSerial(commandRx, commandTx);
+// Command I2C slave connection
+const int i2cAddress = 4;
 
 // Sonar Pins
 const int trigPin = 12;
@@ -27,8 +24,6 @@ const int frontAngle = 90;
 boolean movingForward = false;
 boolean autoPilot = true;
 char message[256];       // Buffer for formatted log messages
-char commandBuffer[80];
-int cmdPos = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -36,6 +31,12 @@ void setup() {
     ; // wait for serial port to connect. Needed for Native USB only
   }
   Serial.println("Initializing");
+
+  // I2C Slave setup
+  sprintf(message, "Configuring I2C connection: address=%d", i2cAddress);
+  Serial.println(message);
+  Wire.begin(i2cAddress);
+  Wire.onReceive(handleI2CEvent);
 
   // Sonar setup
   sprintf(message, "Configuring sonar: TriggerPin=%d EchoPin=%d", trigPin, echoPin);
@@ -63,12 +64,6 @@ void setup() {
   movingForward = false;
   delay(1000);
 
-  // Command serial connection
-  sprintf(message, "Configuring command serial connection: RxPin=%d TxPin=%d BaudRate", commandRx, commandTx, commandBaudRate);
-  Serial.println(message);
-  
-  commandSerial.begin(commandBaudRate);
-  
   // We are all set
   Serial.println("Ready");
 }
@@ -118,58 +113,48 @@ void loop() {
    if(autoPilot) {
      forward();
    }
-   
-   if(commandSerial.available()) {
-    if (cmdPos > 79) {
-      cmdPos = 0;
-    }
-    commandBuffer[cmdPos] = commandSerial.read();
-    Serial.print("Read: '");
-    Serial.print(commandBuffer[cmdPos]);
-    Serial.print("'=");
-    Serial.println((int)commandBuffer[cmdPos]);
-    if(commandBuffer[cmdPos] != 13 && commandBuffer[cmdPos] > 0) { // Skip spaces
-      cmdPos++;
-    } else {
-      Serial.println("Skipped");
-    }
-    if(commandBuffer[cmdPos-1] == '\n') {
-      commandBuffer[cmdPos-1] = 0;
-      sprintf(message, "Recieved command: '%s'",commandBuffer);
-      Serial.println(message);
-      String line = String(commandBuffer);      
-      if(strcmp(commandBuffer,"stop") == 0) {
-        Serial.println("Stopping");
-        autoPilot = false;
-        halt();
-      } else if(strcmp(commandBuffer,"left") == 0) {
-        Serial.println("Rotating left");
-        autoPilot = false;
-        halt();
-        rotate(frontAngle - 15);
-      } else if(strcmp(commandBuffer,"right") == 0) {
-        Serial.println("Rotating right");
-        autoPilot = false;
-        halt();
-        rotate(frontAngle + 15);
-      } else if(strcmp(commandBuffer,"forward") == 0) {
-        Serial.println("Moving forward");
-        autoPilot = false;
-        forward();
-      } else if(strcmp(commandBuffer,"backward") == 0) {
-        Serial.println("Moving backward");
-        autoPilot = false;
-        backward();
-      } else if(strcmp(commandBuffer,"auto") == 0) {
-        Serial.println("Enabling autopilot");
-        autoPilot = true;
-      } else {
-        Serial.print(">> ");
-        Serial.println(commandBuffer);
-      }
-      cmdPos = 0;
-      commandBuffer[0] = 0;
-    }
+}
+
+void handleI2CEvent(int byteCount) {
+   char message[byteCount + 1];
+   message[byteCount]  = 0;
+   for(int i=0; Wire.available(); i++) {
+       message[i] = Wire.read();
+   }
+   processCommand(message);
+}
+
+void processCommand(char* command) {
+  sprintf(message, "Recieved command: '%s'",command);
+  Serial.println(message);
+  if(strcmp(command,"stop") == 0) {
+    Serial.println("Stopping");
+    autoPilot = false;
+    halt();
+  } else if(strcmp(command,"left") == 0) {
+    Serial.println("Rotating left");
+    autoPilot = false;
+    halt();
+    rotate(frontAngle - 15);
+  } else if(strcmp(command,"right") == 0) {
+    Serial.println("Rotating right");
+    autoPilot = false;
+    halt();
+    rotate(frontAngle + 15);
+  } else if(strcmp(command,"forward") == 0) {
+    Serial.println("Moving forward");
+    autoPilot = false;
+    forward();
+  } else if(strcmp(command,"backward") == 0) {
+    Serial.println("Moving backward");
+    autoPilot = false;
+    backward();
+  } else if(strcmp(command,"auto") == 0) {
+    Serial.println("Enabling autopilot");
+    autoPilot = true;
+  } else {
+    Serial.print(">> ");
+    Serial.println(command);
   }
 }
 
