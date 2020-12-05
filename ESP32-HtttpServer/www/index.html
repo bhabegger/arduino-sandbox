@@ -56,10 +56,6 @@ var commands = {
   }
 }
 
-function updateCapture() {
-  $("#capture").attr('src','/capture?time='+Date.now());
-}
-
 $(function() {
   $("body").keydown(function(evt) {
     switch(evt.which) {
@@ -86,8 +82,6 @@ $(function() {
   $("#backward").click(commands.backward);
   $("#left").click(commands.left);
   $("#right").click(commands.right);
-
-  setInterval(updateCapture, 1000);
 });
 
 </script>
@@ -95,7 +89,7 @@ $(function() {
 <body>
   <div class="container-fluid">
     <div id="cam" class="alert alert-secondary d-flex justify-content-center" role="alert">
-      <img id="capture" src="/capture" />
+      <img id="stream" src="/stream" />
     </div>
   </div>
 <div class="container">
