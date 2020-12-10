@@ -1,6 +1,6 @@
 class Wheel {
     public:
-        Wheel(int forwardPin, int backwardPin, int speedPin);
+        Wheel(int forwardPin, int backwardPin, int speedPin, int calibration);
         void forward(int speed);
         void backward(int speed);
         void stop();
@@ -10,4 +10,5 @@ class Wheel {
         int forwardPin;
         int backwardPin;
         int speedPin;
+        int calibration;
 };

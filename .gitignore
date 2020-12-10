@@ -1,3 +1,4 @@
 .idea
 build
 *~
+/ESP32-HtttpServer/WifiCredentials.h

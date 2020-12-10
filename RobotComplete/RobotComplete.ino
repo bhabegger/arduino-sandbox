@@ -15,26 +15,39 @@ const int echoPin = 13;
 
 // Wheel Pins
 const int wheelLeftSpeed     =  6;
-const int wheelLeftForward   =  10;
-const int wheelLeftBackward  =  11;
-Wheel leftWheel(wheelLeftForward, wheelLeftBackward, wheelLeftSpeed);
+const int wheelLeftForward   =  5;
+const int wheelLeftBackward  =  7;
+Wheel leftWheel(wheelLeftForward, wheelLeftBackward, wheelLeftSpeed, 100);
 
-const int wheelRightSpeed    =  5;
-const int wheelRightForward  = 9;
-const int wheelRightBackward = 8;
-Wheel rightWheel(wheelRightForward, wheelRightBackward, wheelRightSpeed);
+const int wheelRightSpeed    =  3;
+const int wheelRightForward  = 2;
+const int wheelRightBackward = 4;
+Wheel rightWheel(wheelRightForward, wheelRightBackward, wheelRightSpeed, 80);
 
 // Head servo
 Servo servo;
-const int headServoPin = 4;
+const int headServoPin = 11;
 const int frontAngle = 90;
 
 // State
-int speed = SPEED_SLOW;
-boolean movingForward = false;
+/*
+ * Direction
+ *   - 0 is stopped
+ *   - >0 is forward  with  value as speed
+ *   - <0 is backward  with negative value as speed
+ */
+volatile int direction = 0;
+/*
+ * Angle: Adapt the direction to the left or the right (by adjusting wheel speed)
+ *   - 0 straight
+ *   - >0 to the right
+ *   - <0 to the left
+ */
+volatile int angle = 0;
+
 boolean autoPilot = true;
-char message[256];       // Buffer for formatted log messages
-char command[256];
+char message[128];       // Buffer for formatted log messages
+char command[128];
 void setup() {
   command[0] = 0;
 
@@ -71,77 +84,111 @@ void setup() {
   // Motors setup
   sprintf(message, "Configuring wheel motors: LeftWheelForwardPin=%d LeftWheelBackwardPin=%d RightWheelForwardPin=%d RightWheelBackwardPin=%d",wheelLeftForward, wheelLeftBackward, wheelRightForward, wheelRightBackward);
   Serial.println(message);
+  pinMode(wheelLeftSpeed, OUTPUT);
+  pinMode(wheelRightSpeed, OUTPUT);
+
   // leftWheel.check();
   // rightWheel.check();
 
   rotate(360);
-  movingForward = false;
+  leftWheel.stop();
+  rightWheel.stop();
   delay(1000);
+
+  testWheels();
 
   // We are all set
   Serial.println("Ready");
 }
 
-void loop() {  
-   int distance = checkSonar();
-   if(0 <distance && distance < 15) {
-       sprintf(message, "Sonar check gave short distance (%d). Halting.",distance);
-       Serial.println(message);
-       halt();
 
-       if(autoPilot) {
-         servo.write(frontAngle - 90);
-         delay(500);
-         servo.write(frontAngle + 90);
-         delay(500);
-         servo.write(frontAngle);
-  
-         delay(2000);
-         backward();
-         delay(1000);
-         halt();
-         
-         int bestAngle = scanSonar();
-         sprintf(message, "Best angle: %d",bestAngle);
-         Serial.println(message);
-         
-         servo.write(bestAngle);
-         delay(2000);
-         servo.write(frontAngle + bestAngle);
-         delay(1000);
-         
-         if(bestAngle > -30 && bestAngle < 30) {
-           Serial.println("Best angle too in front: Making a u-turn");
-           rotate(180);
-         } else {
-           sprintf(message, "Rotating %d",bestAngle);
-           Serial.println(message);
-           
-           servo.write(bestAngle);
-           rotate(bestAngle);
-           servo.write(frontAngle);
-         }
-         halt();
-       }
-   }
-   if(autoPilot) {
-     forward();
-   }
-   if(command[0] != 0) {
-      processCommand(command);
-      command[0] = 0;
-   }
+void testWheels() {
+    leftWheel.stop();
+    rightWheel.stop();
+
+    testOneWheel(leftWheel);
+    testOneWheel(rightWheel);
+}
+
+void testOneWheel(Wheel wheel) {
+    delay(1000);
+    wheel.forward(127);
+    delay(1000);
+    wheel.forward(255);
+    delay(1000);
+    wheel.stop();
+    delay(1000);
+    wheel.backward(127);
+    delay(1000);
+    wheel.backward(255);
+    delay(1000);
+    wheel.stop();
+}
+
+void loop() {
+    int distance = checkSonar();
+    if(0 <distance && distance < 25) {
+        sprintf(message, "Sonar check gave short distance (%d). Halting.",distance);
+        Serial.println(message);
+        halt();
+
+        if(autoPilot) {
+            autoAdjustDirection();
+        }
+    }
+    if(command[0] != 0) {
+        processCommand(command);
+        command[0] = 0;
+    }
+    if(autoPilot) {
+        forward();
+    }
+}
+
+void autoAdjustDirection() {
+    servo.write(frontAngle - 90);
+    delay(500);
+    servo.write(frontAngle + 90);
+    delay(500);
+    servo.write(frontAngle);
+
+    delay(2000);
+    backward();
+    delay(1000);
+    halt();
+
+    int bestAngle = scanSonar();
+    sprintf(message, "Best angle: %d",bestAngle);
+    Serial.println(message);
+
+    servo.write(bestAngle);
+    delay(2000);
+    servo.write(frontAngle + bestAngle);
+    delay(1000);
+
+    if(bestAngle > -30 && bestAngle < 30) {
+        Serial.println("Best angle too in front: Making a u-turn");
+        rotate(180);
+    } else {
+        sprintf(message, "Rotating %d",bestAngle);
+        Serial.println(message);
+
+        servo.write(bestAngle);
+        rotate(bestAngle);
+        servo.write(frontAngle);
+    }
+    halt();
 }
 
 void handleI2CEvent(int byteCount) {
-   char request[byteCount + 1];
-   request[byteCount]  = 0;
-   for(int i=0; Wire.available(); i++) {
-       request[i] = Wire.read();
-   }
-   strcpy(command, request);
-   sprintf(message, "Recieved command: '%s'",request);
-   Serial.println(message);
+    char request[byteCount + 1];
+    request[byteCount]  = 0;
+    for(int i=0; Wire.available(); i++) {
+        request[i] = Wire.read();
+    }
+    strcpy(command, request);
+    sprintf(message, "Recieved command: '%s'",request);
+    Serial.println(message);
 }
 
 void processCommand(char* command) {
@@ -152,15 +199,13 @@ void processCommand(char* command) {
     autoPilot = false;
     halt();
   } else if(strcmp(command,"left") == 0) {
-    Serial.println("Rotating left");
+    Serial.println("Turning left");
     autoPilot = false;
-    halt();
-    rotate(-45);
+    turn(-15);
   } else if(strcmp(command,"right") == 0) {
-    Serial.println("Rotating right");
+    Serial.println("Turning right");
     autoPilot = false;
-    halt();
-    rotate(45);
+    turn(15);
   } else if(strcmp(command,"forward") == 0) {
     Serial.println("Moving forward");
     autoPilot = false;
@@ -204,15 +249,14 @@ void rotate(int deg) {
   Serial.print(" : ");
   Serial.println(calcDelay);
 
-  speed = SPEED_SLOW;
   if(deg > 0) {
     // Turn right -> move left wheel forward & right wheel backward
-    leftWheel.forward(speed);
-    // rightWheel.backward(speed);
+    leftWheel.forward(SPEED_SLOW);
+    // rightWheel.backward(SPEED_SLOW);
   } else {
     // Turn left -> move right wheel forward & left wheel backward
-    rightWheel.forward(speed);
-    // leftWheel.backward(speed);
+    rightWheel.forward(SPEED_SLOW);
+    // leftWheel.backward(SPEED_SLOW);
     calcDelay = -1 * calcDelay;
   }
 
@@ -222,38 +266,85 @@ void rotate(int deg) {
 }
 
 void halt() {
-  delay(100);
-  speed = 155;
-  movingForward = false;
-  leftWheel.stop();
-  rightWheel.stop();
+    delay(100);
+    direction = 0;
+    angle = 0;
+    adjustWheels();
 }
 
 void forward() {
-  delay(100);
-  if(!movingForward) {
-    Serial.println("forward");
-    speed = SPEED_SLOW;
-  } else {
-    speed += SPEED_INCR;
-    if(speed >= SPEED_MAX) {
-        speed = SPEED_MAX;
+    delay(100);
+    direction = 255;
+    angle = 0;
+    adjustWheels();
+}
+
+void backward() {
+    delay(100);
+    direction = -155;
+    angle = 0;
+    adjustWheels();
+}
+
+void turn(int deg) {
+    delay(100);
+    angle = (angle + deg) % 90;
+    if(direction == 0) {
+        direction = 127;
     }
-  }
-  movingForward = true;
-  leftWheel.forward(speed);
-  rightWheel.forward(speed);
+    adjustWheels();
+}
+
+void adjustWheels() {
+    if(direction == 0) {
+        leftWheel.stop();
+        rightWheel.stop();
+    } else {
+        float speed = (float)direction;
+        float leftAdjust = 1.0;
+        float rightAdjust = 1.0;
+
+        if(direction > 0) {
+            if(angle > 0) {
+                rightAdjust = ((float)90 - angle) / 90.0;
+            } else if (angle < 0) {
+                leftAdjust = ((float)-90 - angle) / -90.0;
+            }
+        } else if (direction < 0) {
+            if(angle > 0) {
+                leftAdjust = ((float)90 - angle) / 90.0;
+            } else if (angle < 0) {
+                rightAdjust = ((float)-90 - angle) / -90.0;
+            }
+        }
+        int speedLeft = round(leftAdjust * speed);
+        int speedRight = round(rightAdjust * speed);
+        Serial.print("Adjusting wheels:");
+        Serial.print("angle=");         Serial.print(angle);
+        Serial.print("speed=");         Serial.print(speed);
+        Serial.print("leftSpeed=");     Serial.print(speedLeft);
+        Serial.print("rightSpeed=");    Serial.print(speedRight);
+        Serial.println();
+
+        if(direction == 0) {
+            leftWheel.stop();
+        } else if(speedLeft > 0) {
+            leftWheel.forward(speedLeft);
+        } else {
+            leftWheel.backward(-1 * speedLeft);
+        }
+        if(speedRight == 0) {
+            rightWheel.stop();
+        } else if(speedRight > 0) {
+            rightWheel.forward(speedRight);
+        } else {
+            rightWheel.backward(-1 * speedRight);
+        }
+    }
 }
 
 int calibratedAngle(int angle) {
  return (frontAngle + angle + 360) % 360;
-}
-
-void backward() {
-  delay(100);
-  speed = SPEED_SLOW;
-  leftWheel.backward(speed);
-  rightWheel.backward(speed);
 }
 
 int scanSonar() {

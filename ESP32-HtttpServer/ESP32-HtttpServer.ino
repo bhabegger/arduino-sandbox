@@ -8,14 +8,13 @@
 #include "HttpServerIndex.h"
 #include "WifiCredentials.h"
 
-#define I2C_SDA 15
-#define I2C_SCL 13
+#define I2C_SDA 15          // Connected to Arduino A4 (SDA)
+#define I2C_SCL 13          // Connected to Arduino A5 (SCL)
 
 WebServer server(80);
 
 const int led = 33;
 const char* indexHtml = INDEX_HTML;
-
 
 const char* boundary = "\r\n--123456789000000000000987654321\r\n";
 size_t boundary_len = strlen(boundary);
@@ -74,15 +73,15 @@ void setupI2C() {
 
 void setupWifi() {
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    WiFi.begin(wifiSSID, wifiPassword);
     Serial.println("");
+    Serial.print("Connecting to ");
+    Serial.println(wifiSSID);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("");
-    Serial.print("Connected to ");
-    Serial.println(ssid);
+    Serial.println("Connected.");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
 }
@@ -101,6 +100,7 @@ void i2cSend(char* msg) {
   Wire.endTransmission();
 }
 
+volatile int connected=0;
 void setupHttpEndpoints() {
 
     server.on("/", handleRoot);
@@ -156,21 +156,26 @@ void setupHttpEndpoints() {
     });
 
     server.on("/stream", []() {
-        Serial.println("streaming");
-        char buffer[80];
-        WiFiClient* client = new WiFiClient();
-        *client = server.client();
+        if(connected > 0) {
+            Serial.println("streaming conflict detected");
+            server.send(409, "text/pain", "Someone else already connected");
+        } else {
+            connected++;
+            Serial.println("streaming");
+            WiFiClient* client = new WiFiClient();
+            *client = server.client();
 
-        TaskHandle_t taskHandle;
-        xTaskCreatePinnedToCore(
-            streamTask,
-            "stream",
-            4 * 1024,
-            (void*) client, //(void*) handler,
-            2,
-            &taskHandle,
-            1
-        );
+            TaskHandle_t taskHandle;
+            xTaskCreatePinnedToCore(
+                streamTask,
+                "stream",
+                4 * 1024,
+                (void*) client, //(void*) handler,
+                2,
+                &taskHandle,
+                1
+            );
+        }
     });
   server.onNotFound(handleNotFound);
 
@@ -178,19 +183,17 @@ void setupHttpEndpoints() {
   Serial.println("HTTP server started");
 }
 
+const char*   STREAM_HTTP_RESPONSE="HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n";
+const int     STREAM_HTTP_RESPONSE_LEN=strlen(STREAM_HTTP_RESPONSE);
+const size_t  STREAM_BUF_SIZE = 80;
 void streamTask(void* param) {
     Serial.println("Starting streaming task");
-    char buffer[80];
+    char buffer[STREAM_BUF_SIZE];
     WiFiClient* client = (WiFiClient*)param;
     camera_fb_t * fb = esp_camera_fb_get();
 
     // Send main header
-    sprintf(buffer, "HTTP/1.1 200 OK\r\n");
-    client->write(buffer, strlen(buffer));
-    sprintf(buffer, "Access-Control-Allow-Origin: *\r\n");
-    client->write(buffer, strlen(buffer));
-    sprintf(buffer, "Content-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n");
-    client->write(buffer, strlen(buffer));
+    client->write(STREAM_HTTP_RESPONSE, STREAM_HTTP_RESPONSE_LEN);
 
     // Write first boundary
     client->write(boundary, boundary_len);
@@ -201,10 +204,10 @@ void streamTask(void* param) {
             Serial.print("sending frame: ");
             Serial.println(framesSent);
         }
-        sprintf(buffer, "Content-Type: image/jpeg\r\n");
+        snprintf(buffer, STREAM_BUF_SIZE, "Content-Type: image/jpeg\r\n");
         client->write(buffer, strlen(buffer));
 
-        sprintf(buffer, "Content-Length: %d\r\n", fb->len);
+        snprintf(buffer, STREAM_BUF_SIZE, "Content-Length: %d\r\n", fb->len);
         client->write(buffer, strlen(buffer));
 
         client->write("\r\n", 2);
@@ -216,6 +219,8 @@ void streamTask(void* param) {
         taskYIELD();
     }
     Serial.print("client disconnected");
+    connected--;
+    vTaskDelete(NULL);
 }
 
 void handleRoot() {
